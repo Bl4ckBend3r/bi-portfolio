@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+projects/retail-bi-dashboard/data/
+projects/retail-bi-dashboard/output/
+projects/etl-data-warehouse/demo/
