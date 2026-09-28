@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import csv
 import random
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, timedelta
 from pathlib import Path
 
 SEED = 42
 OUTPUT_DIR = Path(__file__).parent / "data"
-random.seed(SEED)
+rng = random.Random(SEED)
 
 PRODUCTS = [
     (1, "T-Shirt Basic", "Apparel", 39.90, 17.50),
@@ -43,7 +44,7 @@ def write_csv(path: Path, header: list[str], rows: list[tuple]) -> None:
 
 def random_date() -> date:
     days = (END_DATE - START_DATE).days
-    return START_DATE + timedelta(days=random.randint(0, days))
+    return START_DATE + timedelta(days=rng.randint(0, days))
 
 
 def generate_sales() -> list[tuple]:
@@ -51,17 +52,16 @@ def generate_sales() -> list[tuple]:
     sale_id = 1
     for order_id in range(1, N_ORDERS + 1):
         order_date = random_date()
-        store = random.choice(STORES)
-        line_count = random.choices([1, 2, 3, 4], weights=[58, 27, 11, 4], k=1)[0]
+        store = rng.choice(STORES)
+        line_count = rng.choices([1, 2, 3, 4], weights=[58, 27, 11, 4], k=1)[0]
         for _ in range(line_count):
-            product = random.choice(PRODUCTS)
-            qty = random.choices([1, 2, 3, 4], weights=[72, 19, 7, 2], k=1)[0]
-            discount_pct = random.choices([0, 5, 10, 15, 20], weights=[62, 12, 14, 8, 4], k=1)[0]
-            unit_price = product[3]
-            unit_cost = product[4]
-            gross_revenue = qty * unit_price
-            net_revenue = gross_revenue * (1 - discount_pct / 100)
-            gross_cost = qty * unit_cost
+            product = rng.choice(PRODUCTS)
+            qty = rng.choices([1, 2, 3, 4], weights=[72, 19, 7, 2], k=1)[0]
+            discount_pct = rng.choices([0, 5, 10, 15, 20], weights=[62, 12, 14, 8, 4], k=1)[0]
+            unit_price = Decimal(str(product[3]))
+            unit_cost = Decimal(str(product[4]))
+            net_revenue = (qty * unit_price * (100 - discount_pct) / 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            gross_cost = (qty * unit_cost).quantize(Decimal('0.01'))
             rows.append((
                 sale_id,
                 order_id,
