@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+import argparse
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from pathlib import Path
 
@@ -161,16 +163,20 @@ def log_dq(con: sqlite3.Connection, batch: str, entity: str, key: str, issue: st
     )
 
 
-def load_customers(con: sqlite3.Connection, batch: str, path: Path) -> None:
+def load_customers(con: sqlite3.Connection, batch: str, path: Path) -> int:
     rows = read_csv(path)
     watermark = get_watermark(con, "customers")
     incremental = [r for r in rows if r["ModifiedAt"] > watermark]
     loaded = rejected = 0
     max_modified = watermark
+    seen: set[int] = set()
 
     for row in incremental:
         try:
             customer_id = int(row["CustomerID"])
+            if customer_id <= 0 or customer_id in seen:
+                raise ValueError("CustomerID must be positive and unique within batch")
+            seen.add(customer_id)
             name = row["CustomerName"].strip()
             city = row["City"].strip()
             modified = row["ModifiedAt"]
@@ -215,8 +221,11 @@ def load_customers(con: sqlite3.Connection, batch: str, path: Path) -> None:
             rejected += 1
             log_dq(con, batch, "customers", row.get("CustomerID", ""), str(exc))
 
-    set_watermark(con, "customers", max_modified)
+    # A rejected record must remain eligible on retry after its source is fixed.
+    if not rejected:
+        set_watermark(con, "customers", max_modified)
     log_audit(con, batch, "customers", len(rows), loaded, rejected)
+    return rejected
 
 
 def customer_sk_for_order(con: sqlite3.Connection, customer_id: int, modified_at: str) -> int | None:
@@ -235,7 +244,7 @@ def customer_sk_for_order(con: sqlite3.Connection, customer_id: int, modified_at
     return row[0] if row else None
 
 
-def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> None:
+def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> int:
     rows = read_csv(path)
     watermark = get_watermark(con, "orders")
     incremental = [r for r in rows if r["ModifiedAt"] > watermark]
@@ -247,7 +256,7 @@ def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> None:
         try:
             order_id = int(row["OrderID"])
             customer_id = int(row["CustomerID"])
-            amount = float(row["Amount"])
+            amount = Decimal(row["Amount"])
             modified = row["ModifiedAt"]
             datetime.fromisoformat(modified)
             datetime.fromisoformat(row["OrderDate"])
@@ -255,8 +264,8 @@ def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> None:
             if order_id in seen:
                 raise ValueError("Duplicate OrderID in source batch")
             seen.add(order_id)
-            if amount < 0:
-                raise ValueError("Amount cannot be negative")
+            if order_id <= 0 or customer_id <= 0 or not amount.is_finite() or amount < 0 or amount.as_tuple().exponent < -2:
+                raise ValueError("Invalid ID or amount (requires nonnegative value with at most two decimals)")
 
             customer_sk = customer_sk_for_order(con, customer_id, modified)
             if customer_sk is None:
@@ -273,7 +282,7 @@ def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> None:
                     ModifiedAt = excluded.ModifiedAt
                 WHERE excluded.ModifiedAt > FactOrders.ModifiedAt
                 """,
-                (order_id, customer_sk, row["OrderDate"], amount, modified),
+                (order_id, customer_sk, row["OrderDate"], float(amount), modified),
             )
             loaded += 1
             max_modified = max(max_modified, modified)
@@ -281,8 +290,10 @@ def load_orders(con: sqlite3.Connection, batch: str, path: Path) -> None:
             rejected += 1
             log_dq(con, batch, "orders", row.get("OrderID", ""), str(exc))
 
-    set_watermark(con, "orders", max_modified)
+    if not rejected:
+        set_watermark(con, "orders", max_modified)
     log_audit(con, batch, "orders", len(rows), loaded, rejected)
+    return rejected
 
 
 def print_summary(con: sqlite3.Connection) -> None:
@@ -307,14 +318,28 @@ def print_summary(con: sqlite3.Connection) -> None:
 
 
 def main() -> None:
-    create_demo_sources()
+    parser = argparse.ArgumentParser(description='Incremental SQLite ETL demo')
+    parser.add_argument('--source', type=Path, help='Directory with dated batch folders containing customers.csv and orders.csv')
+    parser.add_argument('--db', type=Path, help='SQLite output file (defaults to demo/warehouse.db)')
+    args = parser.parse_args()
+    global SOURCE, DB_PATH, DEMO
+    if args.source:
+        SOURCE = args.source.resolve()
+    else:
+        create_demo_sources()
+    if args.db:
+        DB_PATH = args.db.resolve()
+        DEMO = DB_PATH.parent
     con = connect()
     init_schema(con)
 
-    for batch in sorted(BATCHES):
-        load_customers(con, batch, SOURCE / batch / "customers.csv")
-        load_orders(con, batch, SOURCE / batch / "orders.csv")
-        con.commit()
+    for folder in sorted(p for p in SOURCE.iterdir() if p.is_dir()):
+        with con:
+            rejected_customers = load_customers(con, folder.name, folder / "customers.csv")
+            rejected_orders = load_orders(con, folder.name, folder / "orders.csv")
+        if rejected_customers or rejected_orders:
+            print(f"Batch {folder.name}: {rejected_customers + rejected_orders} rejected rows; fix source and rerun before processing later batches")
+            break
 
     print_summary(con)
     con.close()

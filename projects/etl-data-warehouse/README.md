@@ -65,3 +65,14 @@ The script creates a local `demo/` directory, generates two daily source batches
 ## Important note
 
 The Azure section is an implementation blueprint, not a claim that the project has been deployed to a live Azure subscription. The local version is fully runnable and mirrors the control flow that would be implemented in Azure Data Factory.
+
+## Validation and custom source
+
+```bash
+python -m unittest discover -s projects/etl-data-warehouse
+python projects/etl-data-warehouse/etl_pipeline.py --source /path/to/batches --db /path/to/warehouse.db
+```
+
+Each source subfolder must contain `customers.csv` (`CustomerID,CustomerName,City,ModifiedAt`) and `orders.csv` (`OrderID,CustomerID,OrderDate,Amount,ModifiedAt`). Folder names should sort in processing order. `ModifiedAt` uses ISO 8601 timestamps. Amounts are nonnegative with at most two decimal places. The script commits one folder at a time and stops after rejected records. Rejected records are logged and the affected watermark remains unchanged so the folder can be corrected and retried. Repeated valid runs leave facts and customer history unchanged; audit entries record each attempt. The demo creates `demo/` locally, ignored by Git.
+
+**Scope:** The SQLite flow runs locally. SQL Server DDL and Azure Data Factory mapping are reference material; neither SQL Server nor Azure is provisioned by this repository.
