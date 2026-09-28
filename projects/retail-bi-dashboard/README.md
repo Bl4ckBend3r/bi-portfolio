@@ -11,7 +11,7 @@ python projects/retail-bi-dashboard/build_report.py
 python -m unittest discover -s projects/retail-bi-dashboard
 ```
 
-Open `projects/retail-bi-dashboard/output/dashboard.html` in a browser. The page is self-contained and works offline. Choose year, store and category; KPI cards, monthly trend, category bars and store table update together. The script recreates all CSV files and `output/retail.db` deterministically with seed 42. Generated data and database are ignored by Git.
+Open `projects/retail-bi-dashboard/output/dashboard.html` in a browser. A [ready-made demo report](dashboard_demo.html) is also included; download that HTML file and open it locally to explore without running Python. The page is self-contained and works offline. Choose year, store and category; KPI cards, monthly trend, category bars and store table update together. The script recreates all CSV files and `output/retail.db` deterministically with seed 42. Generated data and database are ignored by Git.
 
 ## What is measured
 
